@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 from django.contrib.auth import get_user_model
-from django.db import models
+from django.db import models, router
 
 from django.utils.timezone import now
 from django.utils.translation import ugettext_lazy as _
 from django_extensions.db.models import TimeStampedModel
+
+from django_useful_things.signals import post_safe_delete, pre_safe_delete
 
 
 class SoftDeleteModelQuerySet(models.QuerySet):
@@ -36,13 +38,20 @@ class SoftDeleteModel(TimeStampedModel):
     objects = SoftDeleteModelManager.from_queryset(SoftDeleteModelQuerySet)(only_active=True)
     all_objects = SoftDeleteModelManager.from_queryset(SoftDeleteModelQuerySet)(only_active=False)
 
-    def delete(self, user_disabled=None, force_delete=False, *args, **kwargs):
+    def delete(self, user_disabled=None, force_delete=False, using=None, *args, **kwargs):
+        using = using or router.db_for_write(self.__class__, instance=self)
         if force_delete:
             return super(SoftDeleteModel, self).delete(*args, **kwargs)
         if self.is_active:
+            pre_safe_delete.send(
+                sender=self.__class__, instance=self, using=using
+            )
             self.is_active = False
             self.date_disable = now()
             self.user_disabled = user_disabled
+            post_safe_delete.send(
+                sender=self.__class__, instance=self, using=using
+            )
         return super(SoftDeleteModel, self).save()
 
     def active(self, commit=True, **kwargs):
